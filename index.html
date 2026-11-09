@@ -1,0 +1,324 @@
+<title>Dan Tsalle 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap">
+<style>
+/* Layout: full-screen 3D canvas, HUD pinned top, touch pad bottom corners */
+:root{
+  --sky:#7fd0f5; --ink:#1d2b4a; --gold:#ffc83d; --leaf:#4cbf5a; --berry:#e8476a; --paper:#fffaf0;
+  --display:"Baloo 2", "Trebuchet MS", system-ui, sans-serif;
+  color-scheme: light;
+}
+html,body{height:100%;overflow:hidden;background:var(--sky);color:var(--ink);font-family:var(--display);touch-action:none;user-select:none;-webkit-user-select:none}
+#game{position:fixed;inset:0}
+canvas{display:block;touch-action:none}
+.hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;gap:8px;
+  padding-top:calc(10px + env(safe-area-inset-top,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));pointer-events:none;z-index:5}
+.pill{background:var(--paper);border:3px solid var(--ink);border-radius:999px;padding:2px 14px;font-weight:800;font-size:18px;box-shadow:0 3px 0 var(--ink);font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:6px}
+.pill b{color:var(--berry)}
+.star-ic{color:#d99a00}
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:10;background:rgba(29,43,74,.45);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.card{background:var(--paper);border:4px solid var(--ink);border-radius:22px;box-shadow:0 7px 0 var(--ink);padding:22px 22px 24px;max-width:380px;width:100%;text-align:center}
+.card h1{margin:0;font-size:44px;line-height:1;font-weight:800;color:var(--berry);text-wrap:balance;-webkit-text-stroke:1.5px var(--ink)}
+.card p{margin:10px 0 0;font-size:17px;line-height:1.35;font-weight:500}
+.keys{font-size:14px;opacity:.8}
+.btn{margin-top:16px;font-family:var(--display);font-size:24px;font-weight:800;background:var(--gold);color:var(--ink);border:3px solid var(--ink);border-radius:16px;padding:6px 34px;box-shadow:0 5px 0 var(--ink);cursor:pointer}
+.btn:active{transform:translateY(4px);box-shadow:0 1px 0 var(--ink)}
+.btn:focus-visible{outline:3px solid var(--berry);outline-offset:3px}
+#joy{position:fixed;left:calc(max(16px,env(safe-area-inset-left,0px)) + 8px);bottom:calc(24px + env(safe-area-inset-bottom,0px));width:130px;height:130px;border-radius:50%;
+  background:rgba(255,250,240,.35);border:3px solid rgba(29,43,74,.5);z-index:6;touch-action:none}
+#knob{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;background:var(--paper);border:3px solid var(--ink)}
+#jump{position:fixed;right:calc(max(16px,env(safe-area-inset-right,0px)) + 8px);bottom:calc(36px + env(safe-area-inset-bottom,0px));width:96px;height:96px;border-radius:50%;
+  background:var(--berry);color:var(--paper);border:4px solid var(--ink);box-shadow:0 6px 0 var(--ink);font-family:var(--display);font-weight:800;font-size:20px;z-index:6;touch-action:none}
+#jump.on{transform:translateY(4px);box-shadow:0 2px 0 var(--ink)}
+.toast{position:fixed;left:50%;top:30%;transform:translateX(-50%);font-size:34px;font-weight:800;color:var(--paper);-webkit-text-stroke:2px var(--ink);z-index:7;pointer-events:none;transition:opacity .4s}
+@media (hover:hover) and (pointer:fine){#joy,#jump{display:none}}
+</style>
+
+<div id="game"></div>
+<div class="hud">
+  <div class="pill"><span class="star-ic">★</span><span id="stars">0/12</span></div>
+  <div class="pill" id="time">0.0s</div>
+  <div class="pill"><b id="lives">♥♥♥</b></div>
+</div>
+<div id="joy"><div id="knob"></div></div>
+<button id="jump" aria-label="Tsalle">TSALLE</button>
+<div class="toast" id="toast" style="opacity:0"></div>
+
+<div class="overlay" id="startScreen">
+  <div class="card">
+    <h1>Dan Tsalle</h1>
+    <p>Tsallake ramuka, taka kwari a kai, tattara taurari 12, sannan ka kai ga tuta!</p>
+    <p class="keys">Waya: yi amfani da da'ira don tafiya, maballin ja don tsalle.<br>Kwamfuta: Kibiyoyi / WASD da Space.</p>
+    <button class="btn" id="startBtn">Fara</button>
+  </div>
+</div>
+<div class="overlay" id="endScreen" hidden>
+  <div class="card">
+    <h1 id="endTitle">Ka ci!</h1>
+    <p id="endText"></p>
+    <button class="btn" id="againBtn">Sake wasa</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const W=()=>innerWidth, H=()=>innerHeight;
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(W(),H());
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+$('game').appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x7fd0f5);
+scene.fog=new THREE.Fog(0x7fd0f5,40,110);
+const camera=new THREE.PerspectiveCamera(60,W()/H(),0.1,300);
+addEventListener('resize',()=>{renderer.setSize(W(),H());camera.aspect=W()/H();camera.updateProjectionMatrix();});
+
+scene.add(new THREE.HemisphereLight(0xffffff,0x5a7a3a,0.75));
+const sun=new THREE.DirectionalLight(0xfff2d6,0.85);
+sun.position.set(12,25,8);sun.castShadow=true;
+sun.shadow.mapSize.set(1024,1024);
+Object.assign(sun.shadow.camera,{left:-25,right:25,top:25,bottom:-25,near:1,far:70});
+scene.add(sun);scene.add(sun.target);
+
+const M=c=>new THREE.MeshLambertMaterial({color:c});
+const grassTop=M(0x5cc76a), dirt=M(0xb07a4a), stone=M(0xd9c7a3), stoneTop=M(0xf2e3c2), plankM=M(0xf08a3c);
+
+// ---------- Level ----------
+const plats=[];
+function box(x,top,z,w,h,d,kind){
+  const mats = kind==='stone'?[stone,stone,stoneTop,stone,stone,stone]:kind==='plank'?plankM:[dirt,dirt,grassTop,dirt,dirt,dirt];
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mats);
+  m.position.set(x,top-h/2,z);m.receiveShadow=true;m.castShadow=true;scene.add(m);
+  const p={mesh:m,w,h,d,dx:0,dy:0,dz:0};plats.push(p);return p;
+}
+function bounds(p){const q=p.mesh.position;return{x0:q.x-p.w/2,x1:q.x+p.w/2,y0:q.y-p.h/2,y1:q.y+p.h/2,z0:q.z-p.d/2,z1:q.z+p.d/2};}
+
+box(0,0,-7.5,10,6,25);
+box(2.5,1,-14,2,1,2,'stone');
+box(0,0,-32,8,6,16);
+box(0,1.6,-44,3,0.6,3,'stone');
+box(3,3.2,-48,3,0.6,3,'stone');
+box(-1,4.6,-52.5,3,0.6,3,'stone');
+box(0,0,-63,10,6,14);
+const mover=box(0,0,-76,3,0.6,3,'plank');mover.move={base:new THREE.Vector3(0,-0.3,-76),axis:'z',amp:3.2,speed:1.1};
+const mover2=box(0,1.5,-86,3,0.6,3,'plank');mover2.move={base:new THREE.Vector3(0,1.2,-86),axis:'x',amp:3,speed:1.4};
+box(0,0,-96,9,6,10);
+box(-2,1.5,-100,3,1.5,2,'stone');
+box(0,3,-110,10,9,16);
+
+// Decoration
+function tree(x,z,y=0){
+  const g=new THREE.Group();
+  const t=new THREE.Mesh(new THREE.CylinderGeometry(.2,.28,1.4,8),M(0x8a5a33));t.position.y=.7;
+  const c=new THREE.Mesh(new THREE.SphereGeometry(1,12,10),M(0x3fa84f));c.position.y=2;c.scale.set(1,1.1,1);
+  t.castShadow=c.castShadow=true;g.add(t,c);g.position.set(x,y,z);scene.add(g);
+}
+[[-4,-2],[4,-5],[-4,-17],[3.2,-28],[-3.4,-36],[4,-59],[-4,-67],[3.6,-93],[-4,-114],[4,-116]].forEach(([x,z])=>tree(x,z,z<-102?3:0));
+for(let i=0;i<14;i++){
+  const g=new THREE.Group();
+  for(let k=0;k<3;k++){const s=new THREE.Mesh(new THREE.SphereGeometry(1.6-k*.3,10,8),M(0xffffff));s.position.set(k*1.6-1.6,k===1?.5:0,0);g.add(s);}
+  g.position.set((i%2?1:-1)*(14+Math.random()*16),12+Math.random()*8,10-i*10);scene.add(g);
+}
+for(let i=0;i<8;i++){
+  const h=new THREE.Mesh(new THREE.SphereGeometry(10+Math.random()*6,16,12),M(i%2?0x7fd38a:0x6cc47c));
+  h.position.set((i%2?1:-1)*(30+Math.random()*10),-8,-i*16);scene.add(h);
+}
+
+// Flag
+const flag=new THREE.Group();
+const pole=new THREE.Mesh(new THREE.CylinderGeometry(.1,.1,5,8),M(0xeeeeee));pole.position.y=2.5;
+const cloth=new THREE.Mesh(new THREE.BoxGeometry(1.6,1,.08),M(0xe8476a));cloth.position.set(.85,4.3,0);
+const ball=new THREE.Mesh(new THREE.SphereGeometry(.22,10,8),M(0xffc83d));ball.position.y=5.1;
+flag.add(pole,cloth,ball);flag.position.set(0,3,-114);scene.add(flag);
+const FLAG_Z=-113.5;
+
+// Checkpoint marker
+const cp=new THREE.Mesh(new THREE.CylinderGeometry(.6,.6,.15,16),M(0x7fd0f5));cp.position.set(0,.08,-58);scene.add(cp);
+
+// ---------- Hero ----------
+const hero=new THREE.Group();
+const body=new THREE.Group();hero.add(body);
+const bodyM=new THREE.Mesh(new THREE.SphereGeometry(.55,20,16),M(0x2bb3a8));bodyM.position.y=.6;bodyM.castShadow=true;
+const belly=new THREE.Mesh(new THREE.SphereGeometry(.38,16,12),M(0xfff1d6));belly.position.set(0,.5,.25);belly.scale.set(1,1,.6);
+const scarf=new THREE.Mesh(new THREE.TorusGeometry(.42,.12,8,20),M(0xffc83d));scarf.rotation.x=Math.PI/2;scarf.position.y=.95;
+const tail=new THREE.Mesh(new THREE.BoxGeometry(.18,.12,.5),M(0xffc83d));tail.position.set(.25,.95,-.45);tail.rotation.y=.4;
+const eyeW=M(0xffffff),eyeB=M(0x1d2b4a);
+[-.17,.17].forEach(x=>{const e=new THREE.Mesh(new THREE.SphereGeometry(.12,10,8),eyeW);e.position.set(x,.78,.45);
+  const p=new THREE.Mesh(new THREE.SphereGeometry(.06,8,6),eyeB);p.position.set(x,.79,.56);body.add(e,p);});
+const ear1=new THREE.Mesh(new THREE.ConeGeometry(.14,.35,8),M(0x2bb3a8));ear1.position.set(-.25,1.17,0);ear1.rotation.z=.3;
+const ear2=ear1.clone();ear2.position.x=.25;ear2.rotation.z=-.3;
+const feet=[-.22,.22].map(x=>{const f=new THREE.Mesh(new THREE.SphereGeometry(.17,10,8),M(0xe8476a));f.position.set(x,.1,.08);f.scale.set(1,.6,1.4);f.castShadow=true;return f;});
+body.add(bodyM,belly,scarf,tail,ear1,ear2,...feet);
+scene.add(hero);
+const shadowDisc=new THREE.Mesh(new THREE.CircleGeometry(.45,16),new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:.25}));
+shadowDisc.rotation.x=-Math.PI/2;scene.add(shadowDisc);
+
+// ---------- Stars ----------
+const starGeo=new THREE.OctahedronGeometry(.45,0);
+const starMat=new THREE.MeshLambertMaterial({color:0xffc83d,emissive:0x664400});
+const starSpots=[[0,1,-4],[-3,1,-9],[2.5,2.2,-14],[0,2.5,-22],[-2,1,-30],[2,1,-35],[0,2.8,-44],[3,4.4,-48],[-1,5.8,-52.5],[0,1.5,-76],[0,2.8,-86],[-2,2.7,-100]];
+let stars=[];
+function makeStars(){stars.forEach(s=>scene.remove(s.m));stars=starSpots.map(([x,y,z])=>{const m=new THREE.Mesh(starGeo,starMat);m.position.set(x,y,z);m.castShadow=true;scene.add(m);return{m,got:false};});}
+
+// ---------- Beetles (enemies) ----------
+const beetleSpots=[{x:0,z:-32,axis:'x',amp:3,speed:1.6},{x:0,z:-64,axis:'z',amp:4,speed:1.8},{x:0,z:-96,axis:'x',amp:3,speed:2.2},{x:2,z:-108,axis:'x',amp:2.5,speed:2},{x:0,z:-10,axis:'x',amp:3,speed:1.2}];
+let beetles=[];
+function makeBeetle(){
+  const g=new THREE.Group();
+  const shell=new THREE.Mesh(new THREE.SphereGeometry(.55,16,10,0,Math.PI*2,0,Math.PI/2),M(0x7b4fc9));shell.castShadow=true;
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(.55,.5,.15,16),M(0x3b2a66));base.position.y=.02;
+  const stripe=new THREE.Mesh(new THREE.BoxGeometry(.06,.02,1.08),M(0x3b2a66));stripe.position.y=.55;stripe.scale.y=1;
+  [-.16,.16].forEach(x=>{const e=new THREE.Mesh(new THREE.SphereGeometry(.11,8,6),M(0xffffff));e.position.set(x,.3,.44);
+    const p=new THREE.Mesh(new THREE.SphereGeometry(.05,6,5),M(0x1d2b4a));p.position.set(x,.3,.54);g.add(e,p);});
+  g.add(shell,base,stripe);scene.add(g);return g;
+}
+function makeBeetles(){beetles.forEach(b=>scene.remove(b.m));beetles=beetleSpots.map(s=>{const m=makeBeetle();
+  const y=s.z<-102?3:0;m.position.set(s.x,y,s.z);return{...s,y,m,t:Math.random()*6,alive:true,squash:0};});}
+
+// ---------- Input ----------
+const keys={};
+addEventListener('keydown',e=>{keys[e.code]=true;if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();if(e.code==='Space'||e.code==='KeyK')jumpPressed=true;});
+addEventListener('keyup',e=>{keys[e.code]=false;});
+let joyX=0,joyY=0,jumpPressed=false,jumpHeld=false;
+const joy=$('joy'),knob=$('knob');let joyId=null;
+joy.addEventListener('pointerdown',e=>{joyId=e.pointerId;joy.setPointerCapture(e.pointerId);moveJoy(e);});
+joy.addEventListener('pointermove',e=>{if(e.pointerId===joyId)moveJoy(e);});
+const endJoy=e=>{if(e.pointerId===joyId){joyId=null;joyX=joyY=0;knob.style.transform='';}};
+joy.addEventListener('pointerup',endJoy);joy.addEventListener('pointercancel',endJoy);
+function moveJoy(e){const r=joy.getBoundingClientRect();let dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2);
+  const max=r.width/2-14,l=Math.hypot(dx,dy);if(l>max){dx*=max/l;dy*=max/l;}
+  knob.style.transform=`translate(${dx}px,${dy}px)`;joyX=dx/max;joyY=dy/max;}
+const jb=$('jump');
+jb.addEventListener('pointerdown',e=>{e.preventDefault();jumpPressed=true;jumpHeld=true;jb.classList.add('on');});
+['pointerup','pointercancel','pointerleave'].forEach(t=>jb.addEventListener(t,()=>{jumpHeld=false;jb.classList.remove('on');}));
+
+// ---------- Audio (tiny synth) ----------
+let ac=null;
+function beep(f1,f2,dur,type='square',vol=.08){if(!ac)return;const o=ac.createOscillator(),g=ac.createGain();o.type=type;
+  o.frequency.setValueAtTime(f1,ac.currentTime);o.frequency.exponentialRampToValueAtTime(f2,ac.currentTime+dur);
+  g.gain.setValueAtTime(vol,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);o.start();o.stop(ac.currentTime+dur);}
+
+// ---------- State ----------
+const R=.42,HT=1.2,GRAV=32,JUMP=12.5,SPEED=7.5;
+const pos=new THREE.Vector3(),vel=new THREE.Vector3();
+let ground=null,coyote=0,jumpBuf=0,lives=3,starCount=0,time=0,playing=false,inv=0,checkpoint=new THREE.Vector3(0,0,0),facing=Math.PI,squash=0;
+const camPos=new THREE.Vector3(0,6,10);
+
+function toast(t){const el=$('toast');el.textContent=t;el.style.opacity=1;clearTimeout(toast.t);toast.t=setTimeout(()=>el.style.opacity=0,1100);}
+function hud(){$('stars').textContent=starCount+'/12';$('lives').textContent='♥'.repeat(lives)+'♡'.repeat(Math.max(0,3-lives));$('time').textContent=time.toFixed(1)+'s';}
+function respawn(){pos.copy(checkpoint);pos.y+=.5;vel.set(0,0,0);inv=1.5;}
+function reset(){lives=3;starCount=0;time=0;checkpoint.set(0,0,0);makeStars();makeBeetles();respawn();inv=0;camPos.set(0,6,10);hud();}
+function hurt(){lives--;hud();beep(400,90,.4,'sawtooth',.07);
+  if(lives<=0){end(false);return;}toast('Kai! Saura '+lives);respawn();}
+function end(win){playing=false;$('endScreen').hidden=false;
+  $('endTitle').textContent=win?'Ka ci!':'An gama';
+  $('endText').textContent=win?`Ka kai ga tuta cikin dakika ${time.toFixed(1)} da taurari ${starCount} cikin 12.`:'Rayukanka sun kare. Sake gwadawa!';
+  if(win){beep(520,1040,.25,'square');setTimeout(()=>beep(660,1320,.35,'square'),180);}}
+
+$('startBtn').onclick=()=>{try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();}catch(e){}$('startScreen').hidden=true;reset();playing=true;};
+$('againBtn').onclick=()=>{$('endScreen').hidden=true;reset();playing=true;};
+
+// ---------- Physics ----------
+function overlapping(b){return pos.x+R>b.x0&&pos.x-R<b.x1&&pos.z+R>b.z0&&pos.z-R<b.z1&&pos.y+HT>b.y0+.001&&pos.y<b.y1-.001;}
+function step(dt){
+  // moving platforms
+  const tt=performance.now()/1000;
+  plats.forEach(p=>{if(!p.move)return;const q=p.mesh.position,old=q.clone();
+    q.copy(p.move.base);q[p.move.axis]+=Math.sin(tt*p.move.speed)*p.move.amp;q.y=p.move.base.y;
+    p.dx=q.x-old.x;p.dy=q.y-old.y;p.dz=q.z-old.z;});
+  if(ground&&ground.move){pos.x+=ground.dx;pos.z+=ground.dz;}
+
+  // input
+  let ix=(keys.ArrowRight||keys.KeyD?1:0)-(keys.ArrowLeft||keys.KeyA?1:0)+joyX;
+  let iz=(keys.ArrowDown||keys.KeyS?1:0)-(keys.ArrowUp||keys.KeyW?1:0)+joyY;
+  const il=Math.hypot(ix,iz);if(il>1){ix/=il;iz/=il;}
+  const accel=ground?40:18;
+  vel.x+=(ix*SPEED-vel.x)*Math.min(1,accel*dt/SPEED*1.5);
+  vel.z+=(iz*SPEED-vel.z)*Math.min(1,accel*dt/SPEED*1.5);
+  if(il>.15)facing=Math.atan2(ix,iz);
+
+  if(jumpPressed){jumpBuf=.15;jumpPressed=false;}
+  jumpBuf-=dt;coyote=ground?.1:coyote-dt;
+  if(jumpBuf>0&&coyote>0){vel.y=JUMP;jumpBuf=0;coyote=0;ground=null;squash=-.3;beep(300,700,.15,'square',.05);}
+  const holding=jumpHeld||keys.Space||keys.KeyK;
+  vel.y-=GRAV*dt*(vel.y>0&&!holding?1.9:1);
+  if(vel.y<-25)vel.y=-25;
+
+  const boxes=plats.map(bounds);
+  pos.x+=vel.x*dt;
+  boxes.forEach(b=>{if(overlapping(b)){pos.x=vel.x>0?b.x0-R:b.x1+R;vel.x=0;}});
+  pos.z+=vel.z*dt;
+  boxes.forEach(b=>{if(overlapping(b)){pos.z=vel.z>0?b.z0-R:b.z1+R;vel.z=0;}});
+  const wasAir=!ground;ground=null;
+  pos.y+=vel.y*dt;
+  boxes.forEach((b,i)=>{if(overlapping(b)){
+    if(vel.y<=0){pos.y=b.y1;if(wasAir&&vel.y<-6)squash=.35;vel.y=0;ground=plats[i];}
+    else{pos.y=b.y0-HT;vel.y=0;}}});
+  // stick to ground check
+  if(!ground&&vel.y<=0){boxes.forEach((b,i)=>{if(Math.abs(pos.y-b.y1)<.03&&pos.x+R>b.x0&&pos.x-R<b.x1&&pos.z+R>b.z0&&pos.z-R<b.z1){ground=plats[i];vel.y=0;}});}
+
+  if(pos.y<-14)hurt();
+
+  // stars
+  stars.forEach(s=>{if(!s.got&&s.m.position.distanceTo(new THREE.Vector3(pos.x,pos.y+.6,pos.z))<1.1){s.got=true;scene.remove(s.m);starCount++;hud();beep(880,1760,.15,'triangle',.1);
+    if(starCount===12)toast('Duk taurari!');}});
+
+  // beetles
+  inv=Math.max(0,inv-dt);
+  beetles.forEach(b=>{
+    if(!b.alive){b.squash+=dt;b.m.scale.set(1+b.squash,Math.max(.05,.3-b.squash),1+b.squash);if(b.squash>.5)b.m.visible=false;return;}
+    b.t+=dt;const base=b.axis==='x'?b.x:b.z;const v=base+Math.sin(b.t*b.speed)*b.amp;
+    b.m.position[b.axis]=v;const dir=Math.cos(b.t*b.speed);b.m.rotation.y=b.axis==='x'?(dir>0?Math.PI/2:-Math.PI/2):(dir>0?0:Math.PI);
+    const bp=b.m.position,hd=Math.hypot(bp.x-pos.x,bp.z-pos.z);
+    if(hd<.9&&pos.y<bp.y+.7&&pos.y+HT>bp.y){
+      if(vel.y<0&&pos.y>bp.y+.25){b.alive=false;vel.y=10;beep(200,80,.15,'square',.08);toast('Taka!');}
+      else if(inv<=0)hurt();
+    }});
+
+  // checkpoint & goal
+  if(pos.z<-57&&checkpoint.z>-57){checkpoint.set(0,0,-58);cp.material.color.setHex(0xffc83d);toast('Wurin hutu!');beep(500,900,.2,'triangle');}
+  if(pos.z<FLAG_Z+1.2&&pos.y>2.5&&Math.abs(pos.x)<2.5)end(true);
+
+  time+=dt;
+}
+
+// ---------- Render loop ----------
+let last=performance.now(),hudT=0;
+function frame(now){
+  const dt=Math.min(.033,(now-last)/1000);last=now;
+  if(playing){step(dt);hudT+=dt;if(hudT>.1){hudT=0;$('time').textContent=time.toFixed(1)+'s';}}
+  // hero visuals
+  hero.position.copy(pos);
+  let a=facing-hero.rotation.y;while(a>Math.PI)a-=Math.PI*2;while(a<-Math.PI)a+=Math.PI*2;hero.rotation.y+=a*Math.min(1,dt*12);
+  squash*=Math.pow(.0005,dt);
+  const sp=Math.hypot(vel.x,vel.z);const bob=ground&&sp>1?Math.abs(Math.sin(now/90))*.08:0;
+  body.scale.set(1+squash*.6,1-squash,1+squash*.6);body.position.y=bob;
+  feet[0].position.z=.08+(ground?Math.sin(now/90)*.15*sp/SPEED:-.1);feet[1].position.z=.08-(ground?Math.sin(now/90)*.15*sp/SPEED:.1);
+  hero.visible=inv<=0||Math.floor(now/80)%2===0;
+  tail.rotation.y=.4+Math.sin(now/150)*.4;
+  // drop shadow under hero
+  let gy=-100;plats.forEach(p=>{const b=bounds(p);if(pos.x>b.x0&&pos.x<b.x1&&pos.z>b.z0&&pos.z<b.z1&&b.y1<=pos.y+.05&&b.y1>gy)gy=b.y1;});
+  shadowDisc.visible=gy>-100;shadowDisc.position.set(pos.x,gy+.02,pos.z);
+  const s=Math.max(.3,1-(pos.y-gy)*.12);shadowDisc.scale.set(s,s,s);
+  stars.forEach((st,i)=>{st.m.rotation.y=now/400+i;st.m.position.y+=Math.sin(now/300+i)*.003;});
+  cloth.rotation.y=Math.sin(now/250)*.2;
+  // camera
+  const portrait=H()>W();
+  const target=new THREE.Vector3(pos.x*.6,pos.y+(portrait?7.5:6),pos.z+(portrait?12:10));
+  camPos.lerp(target,1-Math.pow(.02,dt));
+  camera.position.copy(camPos);camera.lookAt(pos.x*.8,pos.y+1,pos.z-4);
+  sun.position.set(pos.x+12,pos.y+25,pos.z+8);sun.target.position.set(pos.x,pos.y,pos.z);
+  renderer.render(scene,camera);
+  requestAnimationFrame(frame);
+}
+makeStars();makeBeetles();pos.set(0,0,0);
+requestAnimationFrame(frame);
+})();
+</script>
